@@ -670,9 +670,55 @@ void internal_status(void)
     printf("Internal Status: %2X\n\n", tmp);
 }
 
-void cinco_peaks(int16_t* data_array)
+void cinco_peaks(uint16_t* data_array, int array_len, double mult)
+{   
+    int peaks = 5;
+    double value;
+    double peaksArr[peaks];
+    for (int i=0; i < peaks; i++) {
+        peaksArr[i] = -INFINITY;
+    }
+    printf("************\n");
+    for (int i=0; i < 20; i++) {
+        printf("%f ", (int16_t)data_array[i] * mult);
+    }
+    printf("\n");
+    printf("************\n");
+    for (int i = 0; i < array_len; i++)
+    {
+        value = (int16_t)data_array[i] * mult;
+        for (int j=0; j < peaks; j++)
+        {                            //   7
+            if (value > peaksArr[j]) // 8 6 2 1 0
+            {
+                for (int k=peaks-1; k>j; k--)
+                {
+                    peaksArr[k] = peaksArr[k - 1];
+                }
+                peaksArr[j] = value;
+                break;
+            }
+        }
+    }
+    printf("Peaks: ");
+    for (int i=0; i < peaks-1; i++)
+    {
+        printf("%f, ", peaksArr[i]);
+    }
+    printf("%f\n", peaksArr[peaks-1]);
+}
+
+float RMS(uint16_t* data_array, int array_len, float mult)
 {
-    return data_arrayp[0];
+    float sum = 0;
+    for (int i = 0; i < array_len; i++) {
+        sum += pow(data_array[i] * mult, 2);
+    }
+
+    sum /= array_len;
+
+    return sqrt(sum);
+
 }
 
 void lectura(void)
@@ -680,8 +726,19 @@ void lectura(void)
     uint8_t reg_intstatus = 0x03, tmp;
     int bytes_data8 = 12;
     uint8_t reg_data = 0x0C, data_data8[bytes_data8];
-    uint16_t acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z;
+    int counter = 0;
+    int window = 500;
+    uint16_t *acc_x = malloc(window * sizeof(uint16_t));
+    uint16_t *acc_y = malloc(window * sizeof(uint16_t));
+    uint16_t *acc_z = malloc(window * sizeof(uint16_t));
+    uint16_t *gyr_x = malloc(window * sizeof(uint16_t));
+    uint16_t *gyr_y = malloc(window * sizeof(uint16_t));
+    uint16_t *gyr_z = malloc(window * sizeof(uint16_t));
 
+    double toMS2 = 78.4532 / 32768;
+    double toG = 8.000 / 32768;
+    //double toRadS = 34.90659 / 32768;
+    
     while (1)
     {
         bmi_read(I2C_NUM_0, &reg_intstatus, &tmp, 1);
@@ -697,24 +754,35 @@ void lectura(void)
             //     printf("Lectura RAW: %2X \n",data_data8[i]);
             // }
 
-            acc_x = ((uint16_t)data_data8[1] << 8) | (uint16_t)data_data8[0];
-            acc_y = ((uint16_t)data_data8[3] << 8) | (uint16_t)data_data8[2];
-            acc_z = ((uint16_t)data_data8[5] << 8) | (uint16_t)data_data8[4];
 
-            gyr_x = ((uint16_t)data_data8[7] << 8) | (uint16_t)data_data8[6];
-            gyr_y = ((uint16_t)data_data8[9] << 8) | (uint16_t)data_data8[8];
-            gyr_z = ((uint16_t)data_data8[11] << 8) | (uint16_t)data_data8[10];
+            acc_x[counter] = ((uint16_t)data_data8[1] << 8) | (uint16_t)data_data8[0];
+            acc_y[counter] = ((uint16_t)data_data8[3] << 8) | (uint16_t)data_data8[2];
+            acc_z[counter] = ((uint16_t)data_data8[5] << 8) | (uint16_t)data_data8[4];
 
-            // printf("acc_x: %f m/s2     acc_y: %f m/s2     acc_z: %f m/s2\n", (int16_t)acc_x * (78.4532 / 32768), (int16_t)acc_y * (78.4532 / 32768), (int16_t)acc_z * (78.4532 / 32768));
-            // printf("acc_x: %f g     acc_y: %f g     acc_z: %f g     gyr_x: %f rad/s     gyr_y: %f rad/s      gyr_z: %f rad/s\n", (int16_t)acc_x * (8.000 / 32768), (int16_t)acc_y * (8.000 / 32768), (int16_t)acc_z * (8.000 / 32768), (int16_t)gyr_x * (34.90659 / 32768), (int16_t)gyr_y * (34.90659 / 32768), (int16_t)gyr_z * (34.90659 / 32768));
-            printf("acc_x: %f g     acc_y: %f g     acc_z: %f g  \n", (int16_t)acc_x * (8.000 / 32768), (int16_t)acc_y * (8.000 / 32768), (int16_t)acc_z * (8.000 / 32768));
-            // printf("gyr_x: %f rad/s     gyr_y: %f rad/s      gyr_z: %f rad/s\n", (int16_t)gyr_x * (34.90659 / 32768), (int16_t)gyr_y * (34.90659 / 32768), (int16_t)gyr_z * (34.90659 / 32768));
+            gyr_x[counter] = ((uint16_t)data_data8[7] << 8) | (uint16_t)data_data8[6];
+            gyr_y[counter] = ((uint16_t)data_data8[9] << 8) | (uint16_t)data_data8[8];
+            gyr_z[counter] = ((uint16_t)data_data8[11] << 8) | (uint16_t)data_data8[10];
+
+            if (counter + 1 == window) {
+                // printf("acc_x: %f m/s2     acc_y: %f m/s2     acc_z: %f m/s2\n", (int16_t)acc_x * (78.4532 / 32768), (int16_t)acc_y * (78.4532 / 32768), (int16_t)acc_z * (78.4532 / 32768));
+                // printf("acc_x: %f g     acc_y: %f g     acc_z: %f g     gyr_x: %f rad/s     gyr_y: %f rad/s      gyr_z: %f rad/s\n", (int16_t)acc_x * (8.000 / 32768), (int16_t)acc_y * (8.000 / 32768), (int16_t)acc_z * (8.000 / 32768), (int16_t)gyr_x * (34.90659 / 32768), (int16_t)gyr_y * (34.90659 / 32768), (int16_t)gyr_z * (34.90659 / 32768));
+                // printf("acc_x: %f g     acc_y: %f g     acc_z: %f g  \n", (int16_t)acc_x * (8.000 / 32768), (int16_t)acc_y * (8.000 / 32768), (int16_t)acc_z * (8.000 / 32768));
+                // printf("gyr_x: %f rad/s     gyr_y: %f rad/s      gyr_z: %f rad/s\n", (int16_t)gyr_x * (34.90659 / 32768), (int16_t)gyr_y * (34.90659 / 32768), (int16_t)gyr_z * (34.90659 / 32768));
+                cinco_peaks(acc_x, window, toMS2);
+
+                float rms = RMS(acc_x, window, toG);
+                printf("RMS: %f\n", rms);
+            }
+            
 
             if (ret != ESP_OK)
             {
                 printf("Error lectura: %s \n", esp_err_to_name(ret));
             }
+        } else {
+            printf("ERROR\n");
         }
+        counter = (counter + 1) % window;
     }
 }
 

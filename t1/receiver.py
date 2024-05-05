@@ -38,6 +38,7 @@ while True:
     if ser.in_waiting > 0:
         try:
             response = ser.readline()
+            print(response)
         except KeyboardInterrupt:
             print('Finalizando comunicacion')
             break
