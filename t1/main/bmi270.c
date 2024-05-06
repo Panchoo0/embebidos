@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "esp_log.h"
 #include "driver/i2c.h"
 #include "sdkconfig.h"
@@ -8,6 +9,13 @@
 // #include "common.h"
 // #include "freertos/FreeRTOS.h"
 // #include"struct.h"
+#include "driver/uart.h"
+// FFT
+#include <complex.h>
+#define MAX 512
+#define M_PI 3.1415926535897932384
+#include <sys/time.h>  
+
 
 #define I2C_MASTER_SCL_IO         GPIO_NUM_22 // GPIO pin
 #define I2C_MASTER_SDA_IO         GPIO_NUM_21 // GPIO pin
@@ -19,6 +27,16 @@
 #define EXAMPLE_I2C_ACK_CHECK_DIS 0x0
 #define ACK_VAL                   0x0
 #define NACK_VAL                  0x1
+
+
+#define BUF_SIZE (128) // buffer size
+#define TXD_PIN 1  // UART TX pin
+#define RXD_PIN 3  // UART RX pin
+#define UART_NUM UART_NUM_0   // UART port number
+#define BAUD_RATE 115200   // Baud rate
+
+#define REDIRECT_LOGS 1 // if redirect ESP log to another UART
+
 
 esp_err_t ret  = ESP_OK;
 esp_err_t ret2 = ESP_OK;
@@ -512,6 +530,37 @@ esp_err_t bmi_init(void)
     return i2c_driver_install(i2c_master_port, conf.mode, 0, 0, 0);
 }
 
+
+// Function for sending things to UART1
+static int uart1_printf(const char *str, va_list ap) {
+    char *buf;
+    vasprintf(&buf, str, ap);
+    uart_write_bytes(UART_NUM_1, buf, strlen(buf));
+    free(buf);
+    return 0;
+}
+
+static void uart_setup() {
+    uart_config_t uart_config = {
+        .baud_rate = 115200,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    };
+
+    uart_param_config(UART_NUM_0, &uart_config);
+    uart_param_config(UART_NUM_1, &uart_config);
+    uart_driver_install(UART_NUM_0, BUF_SIZE * 2, 0, 0, NULL, 0);
+    uart_driver_install(UART_NUM_1, BUF_SIZE * 2, 0, 0, NULL, 0);
+
+    // Redirect ESP log to UART1
+    if (REDIRECT_LOGS) {
+        esp_log_set_vprintf(uart1_printf);
+    }
+}
+
+
 void chipid(void)
 {
     uint8_t reg_id = 0x00;
@@ -640,6 +689,33 @@ void check_initialization(void)
     }
 }
 
+
+void suspendpowermode(void) {
+    uint8_t reg_pwr_ctrl = 0x7D, val_pwr_ctrl = 0x0;
+    uint8_t reg_pwr_conf = 0x7C, val_pwr_conf = 0x03;
+
+    bmi_write(I2C_NUM_0, &reg_pwr_ctrl, &val_pwr_ctrl, 1);
+    bmi_write(I2C_NUM_0, &reg_pwr_conf, &val_pwr_conf, 1);
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+}
+
+void lowpowermode(void)
+{
+    uint8_t reg_pwr_ctrl = 0x7D, val_pwr_ctrl = 0x0E;
+    uint8_t reg_acc_conf = 0x40, val_acc_conf = 0x29;
+    uint8_t reg_gyr_conf = 0x42, val_gyr_conf = 0x29;
+    uint8_t reg_pwr_conf = 0x7C, val_pwr_conf = 0x03;
+
+    bmi_write(I2C_NUM_0, &reg_pwr_ctrl, &val_pwr_ctrl, 1);
+    
+    bmi_write(I2C_NUM_0, &reg_acc_conf, &val_acc_conf, 1);
+    bmi_write(I2C_NUM_0, &reg_gyr_conf, &val_gyr_conf, 1);
+    bmi_write(I2C_NUM_0, &reg_pwr_conf, &val_pwr_conf, 1);
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+}
+
 void normalpowermode(void)
 {
     // PWR_CTRL: disable auxiliary sensor, gryo acc temp on
@@ -660,6 +736,22 @@ void normalpowermode(void)
     // printf("Normal power mode: activated. \n\n");
 }
 
+void performancepowermode(void) {
+    uint8_t reg_pwr_ctrl = 0x7D, val_pwr_ctrl = 0x0E;
+    uint8_t reg_acc_conf = 0x40, val_acc_conf = 0xA9;
+    uint8_t reg_gyr_conf = 0x42, val_gyr_conf = 0xE9;
+    uint8_t reg_pwr_conf = 0x7C, val_pwr_conf = 0x02;
+
+    bmi_write(I2C_NUM_0, &reg_pwr_ctrl, &val_pwr_ctrl, 1);
+    bmi_write(I2C_NUM_0, &reg_acc_conf, &val_acc_conf, 1);
+    bmi_write(I2C_NUM_0, &reg_gyr_conf, &val_gyr_conf, 1);
+    bmi_write(I2C_NUM_0, &reg_pwr_conf, &val_pwr_conf, 1);
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+}
+
+
+
 void internal_status(void)
 {
     uint8_t reg_internalstatus = 0x21;
@@ -678,12 +770,7 @@ void cinco_peaks(uint16_t* data_array, int array_len, double mult)
     for (int i=0; i < peaks; i++) {
         peaksArr[i] = -INFINITY;
     }
-    printf("************\n");
-    for (int i=0; i < 20; i++) {
-        printf("%f ", (int16_t)data_array[i] * mult);
-    }
-    printf("\n");
-    printf("************\n");
+    
     for (int i = 0; i < array_len; i++)
     {
         value = (int16_t)data_array[i] * mult;
@@ -700,26 +787,43 @@ void cinco_peaks(uint16_t* data_array, int array_len, double mult)
             }
         }
     }
-    printf("Peaks: ");
+    // printf("Peaks: ");
     for (int i=0; i < peaks-1; i++)
     {
         printf("%f, ", peaksArr[i]);
     }
-    printf("%f\n", peaksArr[peaks-1]);
+    printf("%f; ", peaksArr[peaks-1]);
 }
 
-float RMS(uint16_t* data_array, int array_len, float mult)
+void RMS(double *rms, uint16_t* data_array, int array_len)
 {
     float sum = 0;
     for (int i = 0; i < array_len; i++) {
-        sum += pow(data_array[i] * mult, 2);
+        sum += pow(data_array[i], 2);
+        rms[i] = sqrt(sum/ (i + 1));
     }
 
-    sum /= array_len;
-
-    return sqrt(sum);
-
+    for (int i=0; i < array_len-1; i++)
+    {
+        printf("%f, ", rms[i]);
+    }
+    printf("%f; ", rms[array_len-1]);
 }
+
+        
+void data(uint16_t *data_array, int array_len, double mult)
+{
+    for (int i=0; i < array_len-1; i++)
+    {
+        printf("%f, ", (int16_t)data_array[i] * mult);
+    }
+    printf("%f; ", (int16_t)data_array[array_len-1] * mult);
+
+    // uart_write_bytes(UART_NUM_1, data_array, array_len);
+}
+
+
+
 
 void lectura(void)
 {
@@ -734,11 +838,20 @@ void lectura(void)
     uint16_t *gyr_x = malloc(window * sizeof(uint16_t));
     uint16_t *gyr_y = malloc(window * sizeof(uint16_t));
     uint16_t *gyr_z = malloc(window * sizeof(uint16_t));
+    double *rms_x = malloc(window * sizeof(double));
+    double *rms_y = malloc(window * sizeof(double));
+    double *rms_z = malloc(window * sizeof(double));
+    double *fft_x = malloc(window * sizeof(double));
+    double *fft_y = malloc(window * sizeof(double));
+    double *fft_z = malloc(window * sizeof(double));
+
 
     double toMS2 = 78.4532 / 32768;
     double toG = 8.000 / 32768;
-    //double toRadS = 34.90659 / 32768;
-    
+    double toRadS = 34.90659 / 32768;
+    // struct timeval t1, t2;
+    // double elapsedTime;
+    // gettimeofday(&t1, NULL);
     while (1)
     {
         bmi_read(I2C_NUM_0, &reg_intstatus, &tmp, 1);
@@ -764,14 +877,50 @@ void lectura(void)
             gyr_z[counter] = ((uint16_t)data_data8[11] << 8) | (uint16_t)data_data8[10];
 
             if (counter + 1 == window) {
+                // gettimeofday(&t2, NULL);
+                // elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0;      // sec to ms
+                // elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
+                // printf("\n%f ms to 500 Count.\n", elapsedTime);
+
+
                 // printf("acc_x: %f m/s2     acc_y: %f m/s2     acc_z: %f m/s2\n", (int16_t)acc_x * (78.4532 / 32768), (int16_t)acc_y * (78.4532 / 32768), (int16_t)acc_z * (78.4532 / 32768));
                 // printf("acc_x: %f g     acc_y: %f g     acc_z: %f g     gyr_x: %f rad/s     gyr_y: %f rad/s      gyr_z: %f rad/s\n", (int16_t)acc_x * (8.000 / 32768), (int16_t)acc_y * (8.000 / 32768), (int16_t)acc_z * (8.000 / 32768), (int16_t)gyr_x * (34.90659 / 32768), (int16_t)gyr_y * (34.90659 / 32768), (int16_t)gyr_z * (34.90659 / 32768));
                 // printf("acc_x: %f g     acc_y: %f g     acc_z: %f g  \n", (int16_t)acc_x * (8.000 / 32768), (int16_t)acc_y * (8.000 / 32768), (int16_t)acc_z * (8.000 / 32768));
                 // printf("gyr_x: %f rad/s     gyr_y: %f rad/s      gyr_z: %f rad/s\n", (int16_t)gyr_x * (34.90659 / 32768), (int16_t)gyr_y * (34.90659 / 32768), (int16_t)gyr_z * (34.90659 / 32768));
-                cinco_peaks(acc_x, window, toMS2);
+                // gettimeofday(&t1, NULL);
+                data(acc_x, window, toMS2);
+                data(acc_y, window, toMS2);
+                data(acc_z, window, toMS2);
+                // gettimeofday(&t2, NULL);
+                // elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0;      // sec to ms
+                // elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
+                // printf("%f ms to printf data.\n", elapsedTime);
 
-                float rms = RMS(acc_x, window, toG);
-                printf("RMS: %f\n", rms);
+                // gettimeofday(&t1, NULL);
+                data(gyr_x, window, toRadS);
+                data(gyr_y, window, toRadS);
+                data(acc_z, window, toRadS);
+
+                // gettimeofday(&t1, NULL);
+                RMS(rms_x, acc_x, window);
+                RMS(rms_y, acc_y, window);
+                RMS(rms_z, acc_z, window);
+                // gettimeofday(&t2, NULL);
+                // elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0;      // sec to ms
+                // elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
+                // printf("%f ms to calc RMS and printf.\n", elapsedTime);
+
+                //gettimeofday(&t1, NULL);
+                cinco_peaks(acc_x, window, toMS2);
+                cinco_peaks(acc_y, window, toMS2);
+                cinco_peaks(acc_z, window, toMS2);
+                // gettimeofday(&t2, NULL);
+                // elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0;      // sec to ms
+                // elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
+                // printf("%f ms to calc peaks and printf.\n", elapsedTime);
+                // printf("\n");
+                // gettimeofday(&t2, NULL);
+
             }
             
 
@@ -786,6 +935,20 @@ void lectura(void)
     }
 }
 
+void handshake(){
+    char buffer[3];
+    while (1) {
+        printf("BEGIN\n");
+        int rLen = uart_read_bytes(UART_NUM, (uint8_t*)buffer, 3, pdMS_TO_TICKS(1000));
+        {
+            if (rLen > 0 && strcmp(buffer, "OK") == 0)
+            {
+                break;
+            }
+        }
+    }
+}
+
 void app_main(void)
 {
     ESP_ERROR_CHECK(bmi_init());
@@ -795,6 +958,7 @@ void app_main(void)
     check_initialization();
     normalpowermode();
     internal_status();
-    printf("Comienza lectura\n\n");
+    uart_setup();
+    // handshake();
     lectura();
 }
