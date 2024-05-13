@@ -3,14 +3,35 @@ from struct import pack, unpack
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import itertools
+import numpy as np
+from pynput import keyboard
 
 # Se configura el puerto y el BAUD_Rate
 PORT = 'COM3'  # Esto depende del sistema operativo
 BAUD_RATE = 115200  # Debe coincidir con la configuracion de la ESP32
+WINDOW = 128
+
+KEYBOARD_INPUT = ""
+keys = dict([('1', 'Suspend Power Mode'), ('2', 'Lower Power Mode'), ('3', 'Normal Power Mode'), ('4', 'Performance Power Mode'), ('a', 'Cambio frecuencia de muestreo')])
+def on_press(key):
+    global KEYBOARD_INPUT
+    if key == keyboard.Key.esc:
+        return False  # stop listener
+    try:
+        k = key.char  # single-char keys
+    except:
+        k = key.name  # other keys
+    if k in ['1', '2', '3', '4', 'a']:  # keys of interest
+        KEYBOARD_INPUT = k
+        #print('Key pressed: ' + k)
+        print('Input recived:', keys.get(k))
+
+listener = keyboard.Listener(on_press=on_press)
+listener.start()  # start to listen on a separate thread
+# listener.join()  # remove if main thread is polling self.keys
 
 # Se abre la conexion serial
 ser = serial.Serial(PORT, BAUD_RATE, timeout = 1)
-
 # Funciones
 def send_message(message):
     """ Funcion para enviar un mensaje a la ESP32 """
@@ -41,6 +62,7 @@ xlist, accx, accy, accz = [], [], [], []
 RMSx, RMSy, RMSz = [], [], []
 FFTx, FFTy, FFTz = [], [], []
 xlistpeaks, Peaksx, Peaksy, Peaksz = [], [], [], []
+xlistfft = []
 
 ln, = axs[0, 0].plot([], [], 'ro')
 ln2, = axs[0, 1].plot([], [], 'ro')
@@ -57,20 +79,29 @@ def init():
     axs[0, 0].set_title('Aceleración')
     axs[0, 0].set_ylim(-20, 20)
     axs[0, 1].set_title('RMS')
-    axs[0, 1].set_ylim(-10, 10)
-    axs[1, 1].set_title('FFT')
+    #axs[0, 1].set_ylim(-10, 10)
+    axs[1, 0].set_title('FFT')
     axs[1, 1].set_title('Peaks')
     axs[1, 1].set_ylim(-30, 30)
 
-def update(i, xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlistpeaks, Peaksx, Peaksy, Peaksz):
+def update(i, xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlistpeaks, Peaksx, Peaksy, Peaksz, xlistfft):
     global index
+    global KEYBOARD_INPUT
     # Read the sensor data
     if ser.in_waiting > 0:
         try:
             response = ser.readline()
-            print("DATOS")
-            print(response)
+            if KEYBOARD_INPUT != "":
+                send_message(f"{KEYBOARD_INPUT}\0".encode())
+                KEYBOARD_INPUT = ""
 
+            if response.decode().strip("\r\n") == "ERROR":
+                print("Presiona otro número para salir del modo suspención")
+                #print(KEYBOARD_INPUT)
+                return
+            #print("DATOS")
+            #print(response)
+    
             dataRows = response.decode().strip("; \r\n").split("; ")
 
             accDatax, accDatay, accDataz = dataRows[:3]
@@ -84,9 +115,10 @@ def update(i, xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlist
             newRMSz = [float(z) for z in RMSDataz.split(", ")]
             
             FFTDatax, FFTDatay, FFTDataz = dataRows[6:9]
-            newFFTx = [float(x) for x in FFTDatax.split(", ")]
-            newFFTy = [float(y) for y in FFTDatay.split(", ")]
-            newFFTz = [float(z) for z in FFTDataz.split(", ")]
+
+            newFFTx = [2*np.abs(complex(x.strip()))/WINDOW for x in FFTDatax.split(", ")]
+            newFFTy = [2*np.abs(complex(y.strip()))/WINDOW for y in FFTDatay.split(", ")]
+            newFFTz = [2*np.abs(complex(z.strip()))/WINDOW for z in FFTDataz.split(", ")]
 
             PeaksDatax, PeaksDatay, PeaksDataz = dataRows[9:12]
             newPeaksx = [float(x) for x in PeaksDatax.split(", ")]
@@ -94,7 +126,7 @@ def update(i, xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlist
             newPeaksz = [float(z) for z in PeaksDataz.split(", ")]
 
             # Add the data to the lists
-            xlist += list(range(index*500, ((index+1)*500)))
+            xlist += list(range(index*WINDOW, ((index+1)*WINDOW)))
             accx += new_accx
             accy += new_accy
             accz += new_accz
@@ -103,9 +135,10 @@ def update(i, xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlist
             RMSy += newRMSy
             RMSz += newRMSz
 
-            FFTx += newFFTx
-            FFTy += newFFTy
-            FFTz += newFFTz
+            xlistfft = list(range(0, int(WINDOW/2)))
+            FFTx = newFFTx[0:int(WINDOW/2)]
+            FFTy = newFFTy[0:int(WINDOW/2)]
+            FFTz = newFFTz[0:int(WINDOW/2)]
 
             xlistpeaks += list(range(index*5, (index+1)*5))
             Peaksx += newPeaksx
@@ -122,15 +155,10 @@ def update(i, xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlist
             RMSy = RMSy[-2000:]
             RMSz = RMSz[-2000:]
 
-            FFTx = FFTx[-2000:]
-            FFTy = FFTy[-2000:]
-            FFTz = FFTz[-2000:]
-
             xlistpeaks = xlistpeaks[-50:]
             Peaksx = Peaksx[-50:]
             Peaksy = Peaksy[-50:]
             Peaksz = Peaksz[-50:]
-
             # Draw data
             axs[0, 0].clear()
             axs[0, 0].set_title('Aceleración')
@@ -142,7 +170,7 @@ def update(i, xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlist
 
             axs[0, 1].clear()
             axs[0, 1].set_title('RMS')
-            axs[0, 1].set_ylim(-10, 10)
+            #axs[0, 1].set_ylim(60000, 70000)
             axs[0, 1].plot(xlist, RMSx, color="blue", label = "Eje x")
             axs[0, 1].plot(xlist, RMSy, color="red", label = "Eje y")
             axs[0, 1].plot(xlist, RMSz, color="green", label = "Eje z")
@@ -151,9 +179,9 @@ def update(i, xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlist
             axs[1, 0].clear()
             axs[1, 0].set_title('FFT')
             #axs[1, 0].set_ylim(-10, 10)
-            axs[1, 0].plot(xlist, FFTx, color="blue", label = "Eje x")
-            axs[1, 0].plot(xlist, FFTy, color="red", label = "Eje y")
-            axs[1, 0].plot(xlist, FFTz, color="green", label = "Eje z")
+            axs[1, 0].plot(xlistfft, FFTx, color="blue", label = "Eje x")
+            axs[1, 0].plot(xlistfft, FFTy, color="red", label = "Eje y")
+            axs[1, 0].plot(xlistfft, FFTz, color="green", label = "Eje z")
             axs[1, 0].legend()
 
             axs[1, 1].clear()
@@ -188,7 +216,6 @@ while True:
 
 
 # while True:
-#     print(ser.in_waiting)
 #     if ser.in_waiting > 0:
 #         try:
 #             response = ser.readline()
@@ -201,5 +228,5 @@ while True:
 #             print('Error en leer mensaje')
 #             continue
 
-anim = FuncAnimation(fig, update, i_gen, init_func=init, save_count=200, fargs=(xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlistpeaks, Peaksx, Peaksy, Peaksz))
+anim = FuncAnimation(fig, update, i_gen, init_func=init, save_count=200, fargs=(xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlistpeaks, Peaksx, Peaksy, Peaksz, xlistfft))
 plt.show()
