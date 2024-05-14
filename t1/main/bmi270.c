@@ -703,15 +703,15 @@ void suspendpowermode(void) {
 
 void lowpowermode(void)
 {
-    uint8_t reg_pwr_ctrl = 0x7D, val_pwr_ctrl = 0x0E;
-    uint8_t reg_acc_conf = 0x40, val_acc_conf = 0x29;
+    uint8_t reg_pwr_ctrl = 0x7D, val_pwr_ctrl = 0x06;
+    uint8_t reg_acc_conf = 0x40, val_acc_conf = 0x69;
     uint8_t reg_gyr_conf = 0x42, val_gyr_conf = 0x29;
     uint8_t reg_pwr_conf = 0x7C, val_pwr_conf = 0x03;
 
     bmi_write(I2C_NUM_0, &reg_pwr_ctrl, &val_pwr_ctrl, 1);
     
     bmi_write(I2C_NUM_0, &reg_acc_conf, &val_acc_conf, 1);
-    // bmi_write(I2C_NUM_0, &reg_gyr_conf, &val_gyr_conf, 1);
+    bmi_write(I2C_NUM_0, &reg_gyr_conf, &val_gyr_conf, 1);
     bmi_write(I2C_NUM_0, &reg_pwr_conf, &val_pwr_conf, 1);
 
     vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -851,10 +851,59 @@ void calcularFFT(uint16_t *data_array, int array_len) {
 }
 
 
-void change_odr_hyper(void) {
-    uint8_t reg_acc_conf = 0x40, val_acc_conf = 0x26;
-    uint8_t reg_gyr_conf = 0x42, val_gyr_conf = 0x29;
+void change_odr_hyper(int value) {
+    uint8_t reg_acc_conf = 0x40, val_acc_conf = 0x65;
+    uint8_t reg_gyr_conf = 0x42, val_gyr_conf = 0x26;
 
+    if (value == 1){
+        val_acc_conf = 0xA9;
+        val_gyr_conf = 0xA9;
+    }
+    if (value == 2){
+        val_acc_conf = 0xAa;
+        val_gyr_conf = 0xAa;
+    }
+    if (value == 3){
+        val_acc_conf = 0xAb;
+        val_gyr_conf = 0xAb;
+    }
+    if (value == 4){
+        val_acc_conf = 0xAc;
+        val_gyr_conf = 0xAc;
+    }
+
+    bmi_write(I2C_NUM_0, &reg_acc_conf, &val_acc_conf, 1);
+    bmi_write(I2C_NUM_0, &reg_gyr_conf, &val_gyr_conf, 1);
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+}
+
+
+double sensitivity_factor = 8.000;
+void change_sensitivity(int range) {
+    uint8_t reg_acc_conf = 0x41, val_acc_conf;
+    uint8_t reg_gyr_conf = 0x43 , val_gyr_conf;
+    if (range == 1){
+        val_acc_conf = 0x00;
+        val_gyr_conf = 0x00;
+        sensitivity_factor = 2.000;
+    }
+    if (range == 2){
+        val_acc_conf = 0x01;
+        val_gyr_conf = 0x01;
+        sensitivity_factor = 4.000;
+    }
+    if (range == 3){
+        val_acc_conf = 0x02;
+        val_gyr_conf = 0x02;
+        sensitivity_factor = 8.000;
+    }
+    if (range == 4){
+        val_acc_conf = 0x03;
+        val_gyr_conf = 0x03;
+        sensitivity_factor = 16.000;
+    }
+    
     bmi_write(I2C_NUM_0, &reg_acc_conf, &val_acc_conf, 1);
     bmi_write(I2C_NUM_0, &reg_gyr_conf, &val_gyr_conf, 1);
 
@@ -865,16 +914,30 @@ void check_inputs() {
     char buffer[3];
     int rLen = uart_read_bytes(UART_NUM, (uint8_t*)buffer, 3, pdMS_TO_TICKS(1000));
     if (rLen == 0) return;
-    if (strcmp(buffer, "1") == 0) {
+    if (strcmp(buffer, "p1") == 0) {
         suspendpowermode();
-    } else if (strcmp(buffer, "2") == 0) {
+    } else if (strcmp(buffer, "p2") == 0) {
         lowpowermode();
-    } else if (strcmp(buffer, "3") == 0) {
+    } else if (strcmp(buffer, "p3") == 0) {
         normalpowermode();
-    } else if (strcmp(buffer, "4" ) == 0) {
+    } else if (strcmp(buffer, "p4" ) == 0) {
         performancepowermode();
-    } else if (strcmp(buffer, "a" ) == 0) {
-        change_odr_hyper();
+    } else if (strcmp(buffer, "s1" ) == 0) {
+        change_sensitivity(1);
+    } else if (strcmp(buffer, "s2" ) == 0) {
+        change_sensitivity(2);
+    } else if (strcmp(buffer, "s3" ) == 0) {
+        change_sensitivity(3);
+    } else if (strcmp(buffer, "s4" ) == 0) {
+        change_sensitivity(4);
+    } else if (strcmp(buffer, "a1" ) == 0) {
+        change_odr_hyper(1);
+    } else if (strcmp(buffer, "a2" ) == 0) {
+        change_odr_hyper(2);
+    } else if (strcmp(buffer, "a3" ) == 0) {
+        change_odr_hyper(3);
+    } else if (strcmp(buffer, "a4" ) == 0) {
+        change_odr_hyper(4);
     }
 }
 
@@ -895,13 +958,14 @@ void lectura(void)
     double *rms_y = malloc(window * sizeof(double));
     double *rms_z = malloc(window * sizeof(double));
     
-    // clock_t start, end;
-    // double cpu_time_used;
+    clock_t start, end;
+    double cpu_time_used;
 
-    double toMS2 = 78.4532 / 32768;
-    double toG = 8.000 / 32768;
+    
+    double toMS2 = (9.80665 * sensitivity_factor) / 32768;
+    double toG = sensitivity_factor / 32768;
     double toRadS = 34.90659 / 32768;
-    // start = clock();
+    start = clock();
     while (1)
     {
         bmi_read(I2C_NUM_0, &reg_intstatus, &tmp, 1);
@@ -927,19 +991,20 @@ void lectura(void)
             gyr_z[counter] = ((uint16_t)data_data8[11] << 8) | (uint16_t)data_data8[10];
 
             if (counter + 1 == window) {
-                // end = clock();
-                // cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-                // printf("Algorithm took %f seconds to execute.\n", cpu_time_used);
+                end = clock();
+                cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+                //printf("Algorithm took %f seconds to execute.\n", cpu_time_used);
                 check_inputs();
+                
 
                 // printf("acc_x: %f m/s2     acc_y: %f m/s2     acc_z: %f m/s2\n", (int16_t)acc_x * (78.4532 / 32768), (int16_t)acc_y * (78.4532 / 32768), (int16_t)acc_z * (78.4532 / 32768));
                 // printf("acc_x: %f g     acc_y: %f g     acc_z: %f g     gyr_x: %f rad/s     gyr_y: %f rad/s      gyr_z: %f rad/s\n", (int16_t)acc_x * (8.000 / 32768), (int16_t)acc_y * (8.000 / 32768), (int16_t)acc_z * (8.000 / 32768), (int16_t)gyr_x * (34.90659 / 32768), (int16_t)gyr_y * (34.90659 / 32768), (int16_t)gyr_z * (34.90659 / 32768));
                 // printf("acc_x: %f g     acc_y: %f g     acc_z: %f g  \n", (int16_t)acc_x * (8.000 / 32768), (int16_t)acc_y * (8.000 / 32768), (int16_t)acc_z * (8.000 / 32768));
                 // printf("gyr_x: %f rad/s     gyr_y: %f rad/s      gyr_z: %f rad/s\n", (int16_t)gyr_x * (34.90659 / 32768), (int16_t)gyr_y * (34.90659 / 32768), (int16_t)gyr_z * (34.90659 / 32768));
 
-                data(acc_x, window, toMS2);
-                data(acc_y, window, toMS2);
-                data(acc_z, window, toMS2);
+                data(acc_x, window, toG);
+                data(acc_y, window, toG);
+                data(acc_z, window, toG);
                
 
                 RMS(rms_x, acc_x, window);
@@ -958,8 +1023,10 @@ void lectura(void)
                 
                 printf("\n");
 
+                toG = sensitivity_factor / 32768;
+                toMS2 = (9.80665 * sensitivity_factor) / 32768;
                 
-                //start = clock();
+                start = clock();
             }
             
 
@@ -998,7 +1065,8 @@ void app_main(void)
     check_initialization();
     normalpowermode();
     //lowpowermode();
-    //change_odr_hyper();
+    // change_sensitivity();
+    // change_odr_hyper();
     internal_status();
     uart_setup();
     handshake();

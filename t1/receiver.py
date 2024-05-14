@@ -12,7 +12,19 @@ BAUD_RATE = 115200  # Debe coincidir con la configuracion de la ESP32
 WINDOW = 128
 
 KEYBOARD_INPUT = ""
-keys = dict([('1', 'Suspend Power Mode'), ('2', 'Lower Power Mode'), ('3', 'Normal Power Mode'), ('4', 'Performance Power Mode'), ('a', 'Cambio frecuencia de muestreo')])
+SUSPENDED = False
+keys = dict([('p1', 'Suspend Power Mode'), 
+             ('p2', 'Lower Power Mode'), 
+             ('p3', 'Normal Power Mode'), 
+             ('p4', 'Performance Power Mode'), 
+             ('s1', 'Cambio a rango +/-2g'), 
+             ('s2', 'Cambio a rango +/-4g'), 
+             ('s3', 'Cambio a rango +/-8g'), 
+             ('s4', 'Cambio a rango +/-16g'), 
+             ('a1', 'Cambio frecuencia de muestreo 200hz'),
+             ('a2', 'Cambio frecuencia de muestreo 400hz'),
+             ('a3', 'Cambio frecuencia de muestreo 800hz'),
+             ('a4', 'Cambio frecuencia de muestreo 1600hz')])
 def on_press(key):
     global KEYBOARD_INPUT
     if key == keyboard.Key.esc:
@@ -20,11 +32,25 @@ def on_press(key):
     try:
         k = key.char  # single-char keys
     except:
-        k = key.name  # other keys
-    if k in ['1', '2', '3', '4', 'a']:  # keys of interest
-        KEYBOARD_INPUT = k
-        #print('Key pressed: ' + k)
-        print('Input recived:', keys.get(k))
+        k = key.name  # other key
+    if k in ['1', '2', '3', '4', 'a', 's', 'p']:  # keys of interest
+        KEYBOARD_INPUT += k
+        if (len(KEYBOARD_INPUT) == 2):
+            if (keys.get(KEYBOARD_INPUT)):
+                keys.get(KEYBOARD_INPUT)
+                print('Input recived:', keys.get(KEYBOARD_INPUT))
+            else:
+                KEYBOARD_INPUT = ""
+                print('Invalid Input')
+                printModoDeUso()
+
+def printModoDeUso():
+    print("===========[Modo de uso]===========")
+    for x, y in keys.items():
+        print(x, ':', y)
+    print("===================================")
+
+printModoDeUso()
 
 listener = keyboard.Listener(on_press=on_press)
 listener.start()  # start to listen on a separate thread
@@ -77,7 +103,7 @@ def i_gen():
 
 def init():
     axs[0, 0].set_title('Aceleración')
-    axs[0, 0].set_ylim(-20, 20)
+    axs[0, 0].set_ylim(-4, 4)
     axs[0, 1].set_title('RMS')
     #axs[0, 1].set_ylim(-10, 10)
     axs[1, 0].set_title('FFT')
@@ -87,18 +113,21 @@ def init():
 def update(i, xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlistpeaks, Peaksx, Peaksy, Peaksz, xlistfft):
     global index
     global KEYBOARD_INPUT
+    global SUSPENDED
     # Read the sensor data
     if ser.in_waiting > 0:
         try:
             response = ser.readline()
-            if KEYBOARD_INPUT != "":
+            if (len(KEYBOARD_INPUT) == 2):
                 send_message(f"{KEYBOARD_INPUT}\0".encode())
                 KEYBOARD_INPUT = ""
 
             if response.decode().strip("\r\n") == "ERROR":
-                print("Presiona otro número para salir del modo suspención")
-                #print(KEYBOARD_INPUT)
+                if SUSPENDED == False:
+                    print("Seleccione otro modo para salir de la suspención")
+                SUSPENDED = True
                 return
+            SUSPENDED = False
             #print("DATOS")
             #print(response)
     
@@ -145,15 +174,15 @@ def update(i, xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlist
             Peaksy += newPeaksy
             Peaksz += newPeaksz
             
-            # Limit lists to 2000 items
-            xlist = xlist[-2000:]
-            accx = accx[-2000:]
-            accy = accy[-2000:]
-            accz = accz[-2000:]
+            # Limit lists to 1000 items
+            xlist = xlist[-1000:]
+            accx = accx[-1000:]
+            accy = accy[-1000:]
+            accz = accz[-1000:]
             
-            RMSx = RMSx[-2000:]
-            RMSy = RMSy[-2000:]
-            RMSz = RMSz[-2000:]
+            RMSx = RMSx[-1000:]
+            RMSy = RMSy[-1000:]
+            RMSz = RMSz[-1000:]
 
             xlistpeaks = xlistpeaks[-50:]
             Peaksx = Peaksx[-50:]
@@ -162,7 +191,7 @@ def update(i, xlist, accx, accy, accz, RMSx, RMSy, RMSz, FFTx, FFTy, FFTz, xlist
             # Draw data
             axs[0, 0].clear()
             axs[0, 0].set_title('Aceleración')
-            axs[0, 0].set_ylim(-20, 20)
+            axs[0, 0].set_ylim(-4, 4)
             axs[0, 0].plot(xlist, accx, color="blue", label = "Eje x")
             axs[0, 0].plot(xlist, accy, color="red", label = "Eje y")
             axs[0, 0].plot(xlist, accz, color="green", label = "Eje z")
