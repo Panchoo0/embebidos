@@ -19,7 +19,8 @@ Adicionalmente, es necesario poder cambiar la configuración de sensibilidad y l
 
 ## Modo de Uso
 
-=========== [Modo de uso] ===========
+```
+=========== [Inputs válidos] ===========
 p1 : Suspend Power Mode
 p2 : Lower Power Mode
 p3 : Normal Power Mode
@@ -32,7 +33,8 @@ a1 : Cambio frecuencia de muestreo 200Hz
 a2 : Cambio frecuencia de muestreo 400Hz
 a3 : Cambio frecuencia de muestreo 800Hz
 a4 : Cambio frecuencia de muestreo 1600Hz
-===================================
+========================================
+```
 
 ## Recursos
 
